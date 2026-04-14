@@ -1,0 +1,23 @@
+services:
+  mordomo-vault:
+    build: .
+    image: renaneunao/mordomo-vault:latest
+    container_name: mordomo-vault
+    env_file: .env
+    volumes:
+      - vault-data:/data
+    networks:
+      - mordomo-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
+volumes:
+  vault-data:
+
+networks:
+  mordomo-net:
+    external: true

@@ -308,3 +308,59 @@ mordomo-vault → checa: "renan" está em allowed_person_ids? → concede ou neg
 | SQLCipher + cache de políticas | 20 MB | < 1% |
 | Criptografia AES-256-GCM | negligível | pico no decrypt |
 | **TOTAL** | **~60 MB** | **< 1%** |
+
+---
+
+## 🗂️ Estrutura do Repositório
+
+```
+mordomo-vault/
+├── src/
+│   ├── config.py      # Env vars, NATS subjects, VAULT_MASTER_KEY loading
+│   ├── crypto.py      # AES-256-GCM encrypt/decrypt (nonce gerado por request)
+│   ├── db.py          # SQLite: secrets, policies, audit_log
+│   ├── policies.py    # Engine de autorização (voice + service)
+│   ├── handlers.py    # NATS handlers: secret.get, policy.reload
+│   └── main.py        # Entrypoint asyncio + reconnect loop
+├── vault_cli.py        # CLI de bootstrap: set-secret, add-policy, issue-token, revoke-token
+├── requirements.txt    # nats-py==2.6.0, cryptography==42.0.8
+├── Dockerfile
+├── docker-compose.yml
+└── .env.example
+```
+
+## 🚀 Bootstrap (primeira vez)
+
+```bash
+# 1. Gerar VAULT_MASTER_KEY
+python -c "import os,binascii; print(binascii.hexlify(os.urandom(32)).decode())"
+# → copiar para .env como VAULT_MASTER_KEY=<hex>
+
+# 2. Subir container
+docker compose up -d
+
+# 3. Dentro do container: cadastrar segredos
+docker exec -it mordomo-vault python vault_cli.py set-secret \
+  --key asaas_api_key --value "sk_live_..." --desc "ASAAS payment key"
+
+# 4. Adicionar política de voz (financeiro)
+docker exec -it mordomo-vault python vault_cli.py add-policy \
+  --key asaas_api_key --mode voice \
+  --modules mordomo-financas-pix --persons owner --min-confidence 0.95
+
+# 5. Adicionar política de serviço (autônomo) + emitir token
+docker exec -it mordomo-vault python vault_cli.py add-policy \
+  --key binance_api_key --mode service --modules investimentos-trading-bot
+
+docker exec -it mordomo-vault python vault_cli.py issue-token \
+  --module investimentos-trading-bot
+# → VAULT_MODULE_TOKEN=vtk_... (adicionar no .env do módulo)
+```
+
+## 🔑 Variáveis de Ambiente
+
+| Variável | Obrigatório | Descrição |
+|---|---|---|
+| `VAULT_MASTER_KEY` | ✅ | 64 hex chars (32 bytes). Nunca ao repo. Backup obrigatório. |
+| `NATS_URL` | ✅ | Ex: `nats://mordomo-nats:4222` |
+| `VAULT_DB_PATH` | — | Default: `/data/vault.db` (volume persistente) |
