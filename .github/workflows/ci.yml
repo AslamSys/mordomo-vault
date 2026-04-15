@@ -10,4 +10,5 @@ jobs:
     uses: AslamSys/.github/.github/workflows/docker-build-push.yml@main
     with:
       image_name: mordomo-vault
-    secrets: inherit
+    secrets:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
