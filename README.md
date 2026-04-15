@@ -216,7 +216,7 @@ mordomo-vault
    → decripta ASAAS_API_KEY → responde no reply
    → publica audit log
        ↓
-mordomo-action-dispatcher
+mordomo-orchestrator
    → despacha para mordomo-financas-pix com a API key na mensagem (efêmera, não persiste)
        ↓
 mordomo-financas-pix → executa PIX
