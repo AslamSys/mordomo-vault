@@ -1,15 +1,12 @@
-"""
-mordomo-vault — entrypoint.
-"""
 import asyncio
 import logging
 import signal
-
 import nats
-
+import uvicorn
 from src.config import NATS_URL, SUBJECT_SECRET_GET, SUBJECT_POLICY_RELOAD
 from src.db import init_db
 from src.handlers import handle_secret_get, handle_policy_reload
+from src.api import app
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,54 +16,59 @@ logger = logging.getLogger("mordomo-vault")
 
 _shutdown = asyncio.Event()
 
-
 def _handle_signal(sig):
     logger.info("Signal %s received — shutting down", sig.name)
     _shutdown.set()
 
-
 async def _subscribe_with_client(nc, subject, handler):
-    """Wrapper so handlers can access the NC client via msg._client."""
     async def _wrapper(msg):
         msg._client = nc
         await handler(msg)
     return await nc.subscribe(subject, cb=_wrapper)
 
+async def run_nats():
+    """Background task for NATS."""
+    try:
+        nc = await nats.connect(
+            NATS_URL,
+            name="mordomo-vault",
+            reconnect_time_wait=2,
+            max_reconnect_attempts=-1,
+        )
+        logger.info("Connected to NATS at %s", NATS_URL)
+        await _subscribe_with_client(nc, SUBJECT_SECRET_GET, handle_secret_get)
+        await _subscribe_with_client(nc, SUBJECT_POLICY_RELOAD, handle_policy_reload)
+        logger.info("NATS handlers ready")
+        return nc
+    except Exception as e:
+        logger.error(f"Failed to connect to NATS: {e}")
+        return None
 
-async def run() -> None:
+async def main() -> None:
     init_db()
-    logger.info("Database initialised at %s", __import__("src.config", fromlist=["VAULT_DB_PATH"]).VAULT_DB_PATH)
+    
+    # Start NATS
+    nc = await run_nats()
+
+    # Start FastAPI
+    config = uvicorn.Config(app, host="0.0.0.0", port=8200, log_level="info")
+    server = uvicorn.Server(config)
+
+    # Handle signals
+    def _stop_server(*_):
+        _shutdown.set()
+        server.should_exit = True
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: _handle_signal(s))
+        loop.add_signal_handler(sig, _stop_server)
 
-    nc = None
-    while not _shutdown.is_set():
-        try:
-            nc = await nats.connect(
-                NATS_URL,
-                name="mordomo-vault",
-                reconnect_time_wait=2,
-                max_reconnect_attempts=-1,
-            )
-            logger.info("Connected to NATS at %s", NATS_URL)
+    logger.info("Vault ready (Web on :8200 + NATS)")
+    await server.serve()
 
-            await _subscribe_with_client(nc, SUBJECT_SECRET_GET, handle_secret_get)
-            await _subscribe_with_client(nc, SUBJECT_POLICY_RELOAD, handle_policy_reload)
-
-            logger.info("Subscribed — vault ready")
-            await _shutdown.wait()
-
-        except Exception as exc:
-            logger.error("Connection error: %s — retrying in 5s", exc)
-            await asyncio.sleep(5)
-        finally:
-            if nc and not nc.is_closed:
-                await nc.drain()
-
+    if nc:
+        await nc.drain()
     logger.info("Vault stopped")
 
-
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(main())
