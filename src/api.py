@@ -61,6 +61,47 @@ async def get_secret(path: str, x_vault_token: str = Header(None)):
         logger.error(f"Decryption failed for {path}: {e}")
         raise HTTPException(status_code=500, detail="Internal decryption error")
 
+from src.db import get_secret_raw, write_audit, upsert_secret, get_all_secrets_raw
+from src.crypto import encrypt, decrypt
+from src.config import VAULT_MASTER_KEY
+
+@app.get("/get_all")
+async def get_all():
+    """Retrieve and decrypt all secrets (for dashboard inventory)."""
+    try:
+        rows = get_all_secrets_raw()
+        results = {}
+        for row in rows:
+            try:
+                plaintext = decrypt(bytes(row["nonce"]), bytes(row["encrypted_value"]), VAULT_MASTER_KEY)
+                results[row["secret_key"]] = plaintext
+            except:
+                results[row["secret_key"]] = "[[ERROR: DECRYPTION FAILED]]"
+        return results
+    except Exception as e:
+        logger.error(f"Failed to decrypt all secrets: {e}")
+        return {}
+
+@app.post("/set")
+async def set_key(request: Request):
+    """Encrypt and store a secret in the vault."""
+    try:
+        data = await request.json()
+        key = data.get("key")
+        value = data.get("value")
+        description = data.get("description", "")
+        
+        if not key or not value:
+            raise HTTPException(status_code=400, detail="Missing key or value")
+            
+        nonce, ciphertext = encrypt(value, VAULT_MASTER_KEY)
+        upsert_secret(key, nonce, ciphertext, description)
+        
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Failed to set secret: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "mordomo-vault-api"}

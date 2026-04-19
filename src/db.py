@@ -198,3 +198,11 @@ def write_audit(
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (secret_key, requester_module, auth_mode, person_id, confidence, int(granted), denial_reason))
     conn.close()
+
+
+def get_all_secrets_raw() -> list[sqlite3.Row]:
+    """Return all secrets in their encrypted form."""
+    conn = _connect()
+    rows = conn.execute("SELECT * FROM secrets").fetchall()
+    conn.close()
+    return rows
